@@ -2,11 +2,13 @@ import "./style.scss";
 
 import collapsableList from "components/collapsableList";
 import Sidebar from "components/sidebar";
+import prompt from "dialogs/prompt";
 import select from "dialogs/select";
 import fsOperation from "fileSystem";
 import constants from "lib/constants";
 import InstallState from "lib/installState";
 import settings from "lib/settings";
+import FileBrowser from "pages/fileBrowser";
 import plugin from "pages/plugin";
 import Url from "utils/Url";
 import helpers from "utils/helpers";
@@ -27,12 +29,15 @@ let isLoading = false;
 
 const $header = (
 	<div className="header">
-		<span className="title">
-			{strings["plugins"]}
+		<div className="title">
+			<span>{strings["plugins"]}</span>
 			<button className="icon-button" onclick={filterPlugins}>
 				<span className="icon tune"></span>
 			</button>
-		</span>
+			<button className="icon-button" onclick={addSource}>
+				<span className="icon more_vert"></span>
+			</button>
+		</div>
 		<input
 			oninput={searchPlugin}
 			type="search"
@@ -89,7 +94,7 @@ function initApp(el) {
 	if (!$installed) {
 		$installed = collapsableList(strings["installed"]);
 		$installed.ontoggle = loadInstalled;
-		$installed.expand();
+		//$installed.expand();
 		container.append($installed);
 	}
 
@@ -213,6 +218,39 @@ async function filterPlugins() {
 
 async function clearFilter() {
 	$searchResult.content = "";
+}
+
+async function addSource() {
+	const sourceOption = [
+		["remote", strings.remote],
+		["local", strings.local],
+	];
+	const sourceType = await select("Select Source", sourceOption);
+
+	if (!sourceType) return;
+	let source;
+	if (sourceType === "remote") {
+		source = await prompt("Enter plugin source", "https://", "url");
+	} else {
+		source = (await FileBrowser("file", "Select plugin source")).url;
+	}
+
+	if (!source) return;
+
+	try {
+		const { default: installPlugin } = await import("lib/installPlugin");
+		await installPlugin(source);
+		if (!$explore.collapsed) {
+			$explore.ontoggle();
+		}
+		if (!$installed.collapsed) {
+			$installed.ontoggle();
+		}
+	} catch (error) {
+		console.error(error);
+		window.toast(helpers.errorMessage(error));
+		addSource(sourceType, source);
+	}
 }
 
 async function loadInstalled() {
@@ -339,7 +377,7 @@ function getLocalRes(id, name) {
 	return Url.join(PLUGIN_DIR, id, name);
 }
 
-function ListItem({ icon, name, id, version, downloads, installed }) {
+function ListItem({ icon, name, id, version, downloads, installed, source }) {
 	if (installed === undefined) {
 		installed = !!installedPlugins.find(({ id: _id }) => _id === id);
 	}
@@ -353,10 +391,15 @@ function ListItem({ icon, name, id, version, downloads, installed }) {
 				{name}
 			</span>
 			{installed ? (
-				<span
-					className="icon more_vert"
-					data-action="more-plugin-action"
-				></span>
+				<>
+					{source ? (
+						<span className="icon replay" data-action="rebuild-plugin"></span>
+					) : null}
+					<span
+						className="icon more_vert"
+						data-action="more-plugin-action"
+					></span>
+				</>
 			) : (
 				<button className="install-btn" data-action="install-plugin">
 					<span className="icon file_downloadget_app"></span>
@@ -371,6 +414,9 @@ function ListItem({ icon, name, id, version, downloads, installed }) {
 		);
 		const installPluginBtn = event.target.closest(
 			'[data-action="install-plugin"]',
+		);
+		const rebuildPluginBtn = event.target.closest(
+			'[data-action="rebuild-plugin"]',
 		);
 		if (morePluginActionButton) {
 			more_plugin_action(id, name);
@@ -411,6 +457,16 @@ function ListItem({ icon, name, id, version, downloads, installed }) {
 				await installPlugin(id, remotePlugin.name, purchaseToken);
 				window.toast(strings["success"], 3000);
 				$explore.ontoggle();
+			} catch (err) {
+				console.error(err);
+				window.toast(helpers.errorMessage(err), 3000);
+			}
+			return;
+		} else if (rebuildPluginBtn) {
+			try {
+				const { default: installPlugin } = await import("lib/installPlugin");
+				await installPlugin(source);
+				window.toast(strings["success"], 3000);
 			} catch (err) {
 				console.error(err);
 				window.toast(helpers.errorMessage(err), 3000);

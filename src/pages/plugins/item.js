@@ -16,9 +16,23 @@ export default function Item({
   name,
   icon,
   version,
+  license,
+  author,
+  price,
+  author_verified,
   downloads,
   installed,
 }) {
+  const authorName = (() => {
+    const displayName =
+      typeof author === "object" ? author.name : author || "Unknown";
+    // Check if it's likely an email or too long
+    if (displayName.includes("@") || displayName.length > 20) {
+      return displayName.substring(0, 20) + "...";
+    }
+    return displayName;
+  })();
+
   return (
     <div
       data-id={id}
@@ -26,32 +40,59 @@ export default function Item({
       data-action="open"
       data-installed={(!!installed).toString()}
     >
-      <span
-        className="icon"
-        style={{ backgroundImage: `url(${icon || "./res/puzzle.png"})` }}
-      ></span>
-      <div className="container">
-        <div className="text" style={{ justifyContent: "space-between" }}>
-          {name}
+      <div className="plugin-header">
+        <div className="plugin-icon">
+          <img src={icon || "./res/puzzle.png"} alt={name + " icon"} />
         </div>
-        <small className="value">
-          <div className="group">
-            <div className="text">v{version}</div>
-          </div>
-          {downloads ? (
-            <div className="group">
-              <div className="text">
-                {helpers.formatDownloadCount(downloads)}
-              </div>
-              <div
-                style={{ width: "fit-content" }}
-                className="icon file_downloadget_app"
-              ></div>
+        <div className="plugin-info">
+          <div className="plugin-main">
+            <div className="plugin-title">
+              <span className="plugin-name" title={name}>
+                {name}
+              </span>
+              <span className="plugin-version">v{version}</span>
             </div>
-          ) : (
-            <></>
-          )}
-        </small>
+            <div className="plugin-meta">
+              <div
+                className="plugin-stats plugin-author"
+                title={
+                  typeof author === "object" ? author.name : author || "Unknown"
+                }
+              >
+                <span className="icon person"></span>
+                {authorName}
+                {author_verified ? (
+                  <i
+                    className="licons verified"
+                    style={{ color: "#3b82f6" }}
+                  ></i>
+                ) : (
+                  ""
+                )}
+              </div>
+              <span className="plugin-meta-dot"></span>
+              <div className="plugin-stats">
+                <span
+                  className="licons scale"
+                  style={{ fontSize: "12px" }}
+                ></span>
+                {license || "Unknown"}
+              </div>
+              {downloads && (
+                <>
+                  <span className="plugin-meta-dot"></span>
+                  <div className="plugin-stats">
+                    <span className="icon save_alt"></span>
+                    {helpers.formatDownloadCount(downloads)}
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+          {price !== null && price !== undefined && price !== 0 ? (
+            <span className="plugin-price">₹{price}</span>
+          ) : null}
+        </div>
       </div>
     </div>
   );

@@ -31,6 +31,8 @@ import androidx.core.content.pm.ShortcutManagerCompat;
 import androidx.core.graphics.drawable.IconCompat;
 import com.foxdebug.system.Ui.Theme;
 import java.io.File;
+import java.io.PrintWriter;
+import java.io.StringWriter;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.nio.ByteBuffer;
@@ -65,6 +67,31 @@ public class System extends CordovaPlugin {
     this.context = cordova.getContext();
     this.activity = cordova.getActivity();
     this.webView = webView;
+
+    // Set up global exception handler
+    Thread.setDefaultUncaughtExceptionHandler(
+      new Thread.UncaughtExceptionHandler() {
+        @Override
+        public void uncaughtException(Thread thread, Throwable ex) {
+          StringWriter sw = new StringWriter();
+          PrintWriter pw = new PrintWriter(sw);
+          ex.printStackTrace(pw);
+          String stackTrace = sw.toString();
+
+          String errorMsg = String.format(
+            "Uncaught Exception: %s\nStack trace: %s",
+            ex.getMessage(),
+            stackTrace
+          );
+
+          sendLogToJavaScript("error", errorMsg);
+
+          // rethrow to the default handler
+          Thread.getDefaultUncaughtExceptionHandler()
+            .uncaughtException(thread, ex);
+        }
+      }
+    );
   }
 
   public boolean execute(
@@ -208,6 +235,21 @@ public class System extends CordovaPlugin {
       );
 
     return true;
+  }
+
+  private void sendLogToJavaScript(String level, String message) {
+    final String js =
+      "window.log('" + level + "', " + JSONObject.quote(message) + ");";
+    cordova
+      .getActivity()
+      .runOnUiThread(
+        new Runnable() {
+          @Override
+          public void run() {
+            webView.loadUrl("javascript:" + js);
+          }
+        }
+      );
   }
 
   private void getConfiguration(CallbackContext callback) {
@@ -571,17 +613,15 @@ public class System extends CordovaPlugin {
       Bitmap bitmap;
       IconCompat icon;
 
-      imgSrc =
-        ImageDecoder.createSource(
-          context.getContentResolver(),
-          Uri.parse(iconSrc)
-        );
+      imgSrc = ImageDecoder.createSource(
+        context.getContentResolver(),
+        Uri.parse(iconSrc)
+      );
       bitmap = ImageDecoder.decodeBitmap(imgSrc);
       icon = IconCompat.createWithBitmap(bitmap);
-      intent =
-        activity
-          .getPackageManager()
-          .getLaunchIntentForPackage(activity.getPackageName());
+      intent = activity
+        .getPackageManager()
+        .getLaunchIntentForPackage(activity.getPackageName());
       intent.putExtra("action", action);
       intent.putExtra("data", data);
 
@@ -605,12 +645,13 @@ public class System extends CordovaPlugin {
     );
 
     if (shortcutManager.isRequestPinShortcutSupported()) {
-      ShortcutInfo pinShortcutInfo = new ShortcutInfo.Builder(context, id)
-        .build();
+      ShortcutInfo pinShortcutInfo = new ShortcutInfo.Builder(
+        context,
+        id
+      ).build();
 
-      Intent pinnedShortcutCallbackIntent = shortcutManager.createShortcutResultIntent(
-        pinShortcutInfo
-      );
+      Intent pinnedShortcutCallbackIntent =
+        shortcutManager.createShortcutResultIntent(pinShortcutInfo);
 
       PendingIntent successCallback = PendingIntent.getBroadcast(
         context,
@@ -667,6 +708,8 @@ public class System extends CordovaPlugin {
         .getMethod("setStatusBarColor", int.class)
         .invoke(window, this.systemBarColor);
 
+      window.getDecorView().setBackgroundColor(this.systemBarColor);
+
       if (Build.VERSION.SDK_INT < 30) {
         setStatusBarStyle(window);
         setNavigationBarStyle(window);
@@ -719,7 +762,7 @@ public class System extends CordovaPlugin {
       decorView.setSystemUiVisibility(uiOptions | 0x80000000 | 0x00000010);
       return;
     }
-    decorView.setSystemUiVisibility(uiOptions | 0x80000000 & ~0x00000010);
+    decorView.setSystemUiVisibility(uiOptions | (0x80000000 & ~0x00000010));
   }
 
   private void getCordovaIntent(CallbackContext callback) {

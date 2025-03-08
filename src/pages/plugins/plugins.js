@@ -47,6 +47,7 @@ export default function PluginsInclude(updates) {
   let currentPage = 1;
   let isLoading = false;
   let hasMore = true;
+  let isSearching = false;
   const LIMIT = 50;
 
   Contextmenu({
@@ -146,15 +147,12 @@ export default function PluginsInclude(updates) {
 
   $page.onclick = handleClick;
 
-  $list.all.addEventListener('scroll', (e) => {
-    if (isLoading || !hasMore) return;
+  $list.all.addEventListener('scroll', async (e) => {
+    if (isLoading || !hasMore || isSearching) return;
 
-    const { scrollTop, scrollHeight, clientHeight } = $currList;
+    const { scrollTop, scrollHeight, clientHeight } = e.target;
     if (scrollTop + clientHeight >= scrollHeight - 100) {
-      if (currSection === "all") {
-        currentPage++;
-        getAllPlugins();
-      }
+        await getAllPlugins();
     }
   })
 
@@ -190,15 +188,23 @@ export default function PluginsInclude(updates) {
     const { action } = $target.dataset;
     if (action === "search") {
       if (currSection === "all") {
+        isSearching = true;
         searchBar(
           $currList,
-          (hide) => (hideSearchBar = hide),
+          (hide) => {
+            hideSearchBar = hide;
+            isSearching = false;
+          },
           undefined,
           searchRemotely,
         );
         return;
       } else {
-        searchBar($currList, (hide) => (hideSearchBar = hide));
+        isSearching = true;
+        searchBar($currList, (hide) => {
+          hideSearchBar = hide;
+          isSearching = false;
+        });
         return;
       }
     }
@@ -225,8 +231,13 @@ export default function PluginsInclude(updates) {
     $section.scrollTop = $section._scroll || 0;
     $currList = $section;
     currSection = section;
-    currentPage = 1;
-    hasMore = true;
+    if (section === "all") {
+      currentPage = 1;
+      hasMore = true;
+      isLoading = false;
+      $list.all.replaceChildren();
+      getAllPlugins();
+    }
     $page.get(".options .active").classList.remove("active");
     $page.get(`#${section}_plugins`).classList.add("active");
   }
@@ -284,14 +295,9 @@ export default function PluginsInclude(updates) {
 
     try {
       isLoading = true;
-      if (currentPage === 1) {
-        plugins.all = [];
-        $list.all.replaceChildren();
-      }
 
       $list.all.setAttribute("empty-msg", strings["loading..."]);
 
-      const installed = await fsOperation(PLUGIN_DIR).lsDir();
       const response = await fetch(`${constants.API_BASE}/plugins?page=${currentPage}&limit=${LIMIT}`);
       const newPlugins = await response.json();
 
@@ -299,20 +305,20 @@ export default function PluginsInclude(updates) {
         hasMore = false;
       }
 
-      plugins.all = [...plugins.all, ...newPlugins];
-
+      const installed = await fsOperation(PLUGIN_DIR).lsDir();
       installed.forEach(({ url }) => {
-        const plugin = plugins.all.find(({ id }) => id === Url.basename(url));
+        const plugin = newPlugins.find(({ id }) => id === Url.basename(url));
         if (plugin) {
           plugin.installed = true;
           plugin.localPlugin = getLocalRes(plugin.id, "plugin.json");
         }
       });
 
-      plugins.all.forEach((plugin) => {
+      newPlugins.forEach((plugin) => {
         $list.all.append(<Item {...plugin} />);
       });
 
+      currentPage++;
       $list.all.setAttribute("empty-msg", strings["no plugins found"]);
     } catch (error) {
       window.log("error", error);
@@ -401,6 +407,7 @@ export default function PluginsInclude(updates) {
       await installPlugin(source);
       await getInstalledPlugins();
     } catch (error) {
+      console.error(error);
       window.toast(helpers.errorMessage(error));
       addSource(sourceType, source);
     }

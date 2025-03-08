@@ -91,8 +91,10 @@ export default function palette(getList, onsSelectCb, placeholder, onremove) {
 	 * @param {string} value
 	 */
 	function onSelect(value) {
-		onsSelectCb(value);
 		remove();
+		setTimeout(() => {
+			onsSelectCb(value);
+		}, 0);
 	}
 
 	/**
