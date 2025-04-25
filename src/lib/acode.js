@@ -1,3 +1,4 @@
+import ajax from "@deadlyjack/ajax";
 import Contextmenu from "components/contextmenu";
 import inputhints from "components/inputhints";
 import Page from "components/page";
@@ -16,11 +17,13 @@ import prompt from "dialogs/prompt";
 import select from "dialogs/select";
 import fsOperation from "fileSystem";
 import keyboardHandler from "handlers/keyboard";
+import purchaseListener from "handlers/purchase";
 import windowResize from "handlers/windowResize";
 import actionStack from "lib/actionStack";
 import commands from "lib/commands";
 import EditorFile from "lib/editorFile";
 import files from "lib/fileList";
+import fileTypeHandler from "lib/fileTypeHandler";
 import fonts from "lib/fonts";
 import NotificationManager from "lib/notificationManager";
 import openFolder from "lib/openFolder";
@@ -154,9 +157,8 @@ export default class Acode {
 	exec(key, val) {
 		if (key in commands) {
 			return commands[key](val);
-		} else {
-			return false;
 		}
+		return false;
 	}
 
 	/**
@@ -166,67 +168,117 @@ export default class Acode {
 	 * @returns {Promise<void>}
 	 */
 	installPlugin(pluginId, installerPluginName) {
-		return new Promise(async (resolve, reject) => {
-			try {
-				const confirmation = await confirm(
-					strings["install"],
-					`Do you want to install plugin '${pluginId}'${installerPluginName ? ` requested by ${installerPluginName}` : ""}?`,
-				);
-
-				if (!confirmation) {
-					reject(new Error("User cancelled installation"));
-					return;
-				}
-
-				const isPluginExists = await fsOperation(
-					Url.join(PLUGIN_DIR, pluginId),
-				).exists();
-				if (isPluginExists) {
-					reject(new Error("PLugin already installed"));
-					return;
-				}
-
-				let purchaseToken = null;
-
-				const pluginUrl = Url.join(constants.API_BASE, `plugin/${pluginId}`);
-				const remotePlugin = await fsOperation(pluginUrl)
-					.readFile("json")
-					.catch(() => {
-						reject(new Error("Failed to fetch plugin details"));
-						return null;
-					});
-
-				if (remotePlugin) {
-					if (Number.parseFloat(remotePlugin.price) > 0) {
-						try {
-							const [product] = await helpers.promisify(iap.getProducts, [
-								remotePlugin.sku,
-							]);
-							if (product) {
-								async function getPurchase(sku) {
-									const purchases = await helpers.promisify(iap.getPurchases);
-									const purchase = purchases.find((p) =>
-										p.productIds.includes(sku),
-									);
-									return purchase;
-								}
-								const purchase = await getPurchase(product.productId);
-								purchaseToken = purchase?.purchaseToken;
-							}
-						} catch (error) {
-							helpers.error(error);
-							reject(new Error("Failed to validate purchase"));
-							return;
-						}
+		return new Promise((resolve, reject) => {
+			confirm(
+				strings.install,
+				`Do you want to install plugin '${pluginId}'${installerPluginName ? ` requested by ${installerPluginName}` : ""}?`,
+			)
+				.then((confirmation) => {
+					if (!confirmation) {
+						reject(new Error("User cancelled installation"));
+						return;
 					}
-				}
 
-				const { default: installPlugin } = await import("lib/installPlugin");
-				await installPlugin(pluginId, remotePlugin.name, purchaseToken);
-				resolve();
-			} catch (error) {
-				reject(error);
-			}
+					fsOperation(Url.join(PLUGIN_DIR, pluginId))
+						.exists()
+						.then((isPluginExists) => {
+							if (isPluginExists) {
+								reject(new Error("Plugin already installed"));
+								return;
+							}
+
+							let purchaseToken;
+							let product;
+							const pluginUrl = Url.join(
+								constants.API_BASE,
+								`plugin/${pluginId}`,
+							);
+							fsOperation(pluginUrl)
+								.readFile("json")
+								.catch(() => {
+									reject(new Error("Failed to fetch plugin details"));
+									return null;
+								})
+								.then((remotePlugin) => {
+									if (remotePlugin) {
+										const isPaid = remotePlugin.price > 0;
+										helpers
+											.promisify(iap.getProducts, [remotePlugin.sku])
+											.then((products) => {
+												[product] = products;
+												if (product) {
+													return getPurchase(product.productId);
+												}
+												return null;
+											})
+											.then((purchase) => {
+												purchaseToken = purchase?.purchaseToken;
+
+												if (isPaid && !purchaseToken) {
+													if (!product) throw new Error("Product not found");
+													return helpers.checkAPIStatus().then((apiStatus) => {
+														if (!apiStatus) {
+															alert(strings.error, strings.api_error);
+															return;
+														}
+
+														iap.setPurchaseUpdatedListener(
+															...purchaseListener(onpurchase, onerror),
+														);
+														return helpers.promisify(
+															iap.purchase,
+															product.json,
+														);
+													});
+												}
+											})
+											.then(() => {
+												import("lib/installPlugin").then(
+													({ default: installPlugin }) => {
+														installPlugin(
+															pluginId,
+															remotePlugin.name,
+															purchaseToken,
+														).then(() => {
+															resolve();
+														});
+													},
+												);
+											});
+
+										async function onpurchase(e) {
+											const purchase = await getPurchase(product.productId);
+											await ajax.post(
+												Url.join(constants.API_BASE, "plugin/order"),
+												{
+													data: {
+														id: remotePlugin.id,
+														token: purchase?.purchaseToken,
+														package: BuildInfo.packageName,
+													},
+												},
+											);
+											purchaseToken = purchase?.purchaseToken;
+										}
+
+										async function onerror(error) {
+											throw error;
+										}
+									}
+								});
+
+							async function getPurchase(sku) {
+								const purchases = await helpers.promisify(iap.getPurchases);
+								const purchase = purchases.find((p) =>
+									p.productIds.includes(sku),
+								);
+								return purchase;
+							}
+						});
+				})
+				.catch((error) => {
+					reject(error);
+				});
 		});
 	}
 
@@ -235,6 +287,7 @@ export default class Acode {
 		if (numFiles) {
 			return strings["unsaved files close app"];
 		}
+		return null;
 	}
 
 	setLoadingMessage(message) {
@@ -296,11 +349,11 @@ export default class Acode {
 			(formatter) => formatter.id !== id,
 		);
 		const { formatter } = appSettings.value;
-		Object.keys(formatter).forEach((mode) => {
+		for (const mode of Object.keys(formatter)) {
 			if (formatter[mode] === id) {
 				delete formatter[mode];
 			}
-		});
+		}
 		appSettings.update(false);
 	}
 
@@ -316,7 +369,8 @@ export default class Acode {
 			formatterSettings(name);
 			this.#afterSelectFormatter(name);
 			return;
-		} else if (!formatter && !selectIfNull) {
+		}
+		if (!formatter && !selectIfNull) {
 			toast(strings["please select a formatter"]);
 		}
 	}
@@ -355,12 +409,12 @@ export default class Acode {
 	 */
 	getFormatterFor(extensions) {
 		const options = [[null, strings.none]];
-		this.formatters.forEach(({ id, name, exts }) => {
+		for (const { id, name, exts } of this.formatters) {
 			const supports = exts.some((ext) => extensions.includes(ext));
 			if (supports || exts.includes("*")) {
 				options.push([id, name]);
 			}
-		});
+		}
 		return options;
 	}
 
@@ -414,8 +468,8 @@ export default class Acode {
 	}
 
 	async toInternalUrl(url) {
-		url = await helpers.toInternalUri(url);
-		return url;
+		const internalUrl = await helpers.toInternalUri(url);
+		return internalUrl;
 	}
 	/**
 	 * Push a notification
@@ -441,5 +495,24 @@ export default class Acode {
 			action,
 			type,
 		});
+	}
+
+	/**
+	 * Register a custom file type handler
+	 * @param {string} id Unique identifier for the handler
+	 * @param {Object} options Handler configuration
+	 * @param {string[]} options.extensions File extensions to handle (without dots)
+	 * @param {function} options.handleFile Function that handles the file opening
+	 */
+	registerFileHandler(id, options) {
+		fileTypeHandler.registerFileHandler(id, options);
+	}
+
+	/**
+	 * Unregister a file type handler
+	 * @param {string} id The handler id to remove
+	 */
+	unregisterFileHandler(id) {
+		fileTypeHandler.unregisterFileHandler(id);
 	}
 }

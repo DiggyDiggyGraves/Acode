@@ -1,7 +1,7 @@
 {
   "name": "com.foxdebug.acode",
   "displayName": "Acode",
-  "version": "1.10.7",
+  "version": "1.11.0",
   "description": "Acode is a code editor for android",
   "scripts": {
     "lang": "node ./utils/lang.js",
@@ -12,7 +12,8 @@
     "setup": "node ./utils/setup.js",
     "lint": "biome lint --write",
     "format": "biome format --write",
-    "check": "biome check --write"
+    "check": "biome check --write",
+    "updateAce": "node ./utils/updateAce.js"
   },
   "keywords": [
     "ecosystem:cordova"
