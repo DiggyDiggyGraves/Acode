@@ -9,7 +9,7 @@ jobs:
     permissions:
       issues: write
       pull-requests: write
-    steps:
+    steps:close-inactive-issues.yml
       - uses: actions/stale@v9
         with:
           days-before-issue-stale: 60
